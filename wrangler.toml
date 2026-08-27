@@ -1,0 +1,20 @@
+name = "maison-decants-automation"
+main = "src/index.ts"
+compatibility_date = "2026-08-22"
+
+[vars]
+APP_NAME = "Maison Decants Automacao"
+APP_CONTACT_EMAIL = "victorhugoteixeirasimon@gmail.com"
+NUVEMSHOP_API_BASE_URL = "https://api.nuvemshop.com.br/v1"
+NUVEMSHOP_OAUTH_TOKEN_URL = "https://www.nuvemshop.com/apps/authorize/token"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "maison-decants-automation"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[env.staging]
+name = "maison-decants-automation-staging"
+
+[env.production]
+name = "maison-decants-automation"
