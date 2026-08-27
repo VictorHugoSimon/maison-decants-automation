@@ -12,6 +12,12 @@ function base64ToBytes(value: string): Uint8Array {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 async function deriveEncryptionKey(secret: string): Promise<CryptoKey> {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(secret));
   return crypto.subtle.importKey("raw", digest, "AES-GCM", false, ["encrypt", "decrypt"]);
@@ -21,7 +27,7 @@ export async function encryptSecret(plainText: string, secret: string): Promise<
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveEncryptionKey(secret);
   const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
+    { name: "AES-GCM", iv: toArrayBuffer(iv) },
     key,
     encoder.encode(plainText),
   );
@@ -34,9 +40,9 @@ export async function decryptSecret(cipherText: string, secret: string): Promise
 
   const key = await deriveEncryptionKey(secret);
   const decrypted = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: base64ToBytes(ivPart) },
+    { name: "AES-GCM", iv: toArrayBuffer(base64ToBytes(ivPart)) },
     key,
-    base64ToBytes(payloadPart),
+    toArrayBuffer(base64ToBytes(payloadPart)),
   );
   return decoder.decode(decrypted);
 }
