@@ -1,5 +1,11 @@
+export interface QueuedWebhookMessage {
+  eventId: string;
+  payload: NuvemshopWebhookPayload;
+}
+
 export interface Env {
   DB: D1Database;
+  WEBHOOK_QUEUE: Queue<QueuedWebhookMessage>;
   APP_NAME: string;
   APP_CONTACT_EMAIL: string;
   NUVEMSHOP_API_BASE_URL: string;
