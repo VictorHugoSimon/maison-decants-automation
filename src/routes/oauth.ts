@@ -45,9 +45,28 @@ export async function handleOAuthCallback(request: Request, env: Env): Promise<R
       .run();
 
     const publicBaseUrl = new URL(env.NUVEMSHOP_REDIRECT_URI).origin;
-    await registerCoreWebhooks(env, token.user_id, token.access_token, publicBaseUrl);
+    const webhookReport = await registerCoreWebhooks(
+      env,
+      token.user_id,
+      token.access_token,
+      publicBaseUrl,
+    );
 
-    return html("Integração autorizada com sucesso. A loja está conectada e os webhooks principais foram registrados.");
+    await env.DB.prepare(
+      "INSERT INTO audit_log (store_id, action, status, details) VALUES (?, 'webhook_registration', ?, ?)",
+    )
+      .bind(
+        token.user_id,
+        webhookReport.failed.length === 0 ? "success" : "warning",
+        JSON.stringify(webhookReport).slice(0, 4000),
+      )
+      .run();
+
+    const optionalWarning = webhookReport.failed.length > 0
+      ? ` ${webhookReport.failed.length} webhook(s) opcional(is) não foram registrados e ficaram documentados na auditoria.`
+      : "";
+
+    return html(`Integração autorizada com sucesso. A loja está conectada e os webhooks obrigatórios foram registrados.${optionalWarning}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await env.DB.prepare(
