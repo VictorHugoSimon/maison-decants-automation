@@ -22,7 +22,9 @@ Os bancos D1 ja foram criados e seus IDs reais estao configurados no `wrangler.t
 - staging: `maison-decants-automation-staging` — `a60e8c1d-7f97-41a1-99c4-619266a556b6`
 - production: `maison-decants-automation` — `837fb810-c0cf-4942-88f0-ceadc90d8381`
 
-Os bindings de Queue estao declarados por ambiente no `wrangler.toml`. Antes do primeiro deploy, confirme que as filas principais existem na mesma conta Cloudflare. As DLQs podem ser criadas explicitamente ou pela configuracao do consumidor.
+Os bindings de Queue estao declarados por ambiente no `wrangler.toml`.
+
+Antes do primeiro deploy, as filas principais precisam existir na mesma conta Cloudflare. As DLQs tambem devem ser criadas explicitamente para manter o provisionamento previsivel.
 
 Criacao manual, se necessario:
 
