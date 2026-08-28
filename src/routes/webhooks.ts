@@ -207,10 +207,10 @@ export async function handleNuvemshopWebhook(request: Request, env: Env): Promis
     .first<{ processing_status: string }>();
 
   if (existing?.processing_status === "processed") {
-    return new Response("accepted", { status: 202 });
+    return new Response("ok", { status: 200 });
   }
 
   await env.WEBHOOK_QUEUE.send({ eventId, payload });
   await markEvent(env, eventId, "queued");
-  return new Response("accepted", { status: 202 });
+  return new Response("ok", { status: 200 });
 }
