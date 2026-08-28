@@ -15,6 +15,22 @@ O fluxo de promocao e sempre `feature -> staging -> main`:
 2. Ao mesclar em `staging`, o workflow **Deploy** aplica migracoes D1 remotas e publica o Worker de staging.
 3. Depois da validacao funcional em staging, promova `staging` para `main` para publicar production.
 
+## Estado atual do deploy (2026-08-28)
+
+Ambos os ambientes ja foram publicados com sucesso pelo pipeline:
+
+| Ambiente | Worker publicado | URL publica | Deploy |
+| --- | --- | --- | --- |
+| staging | `maison-decants-automation-staging` | https://maison-decants-automation-staging.victorhugoteixeirasimon6.workers.dev | verde |
+| production | `maison-decants-automation` | https://maison-decants-automation.victorhugoteixeirasimon6.workers.dev | verde |
+
+Em cada deploy o pipeline aplicou a migracao `0001_init.sql` no D1, garantiu as filas de webhook (producer + consumer) e publicou o Worker. Os secrets `CLOUDFLARE_API_TOKEN` e `CLOUDFLARE_ACCOUNT_ID` ja estao configurados no GitHub.
+
+Redirect URIs OAuth de cada ambiente (usar em `NUVEMSHOP_REDIRECT_URI` e no cadastro do app na Nuvemshop):
+
+- staging: `https://maison-decants-automation-staging.victorhugoteixeirasimon6.workers.dev/oauth/callback`
+- production: `https://maison-decants-automation.victorhugoteixeirasimon6.workers.dev/oauth/callback`
+
 ## Recursos Cloudflare ja provisionados
 
 Os bancos D1 ja foram criados e seus IDs reais estao configurados no `wrangler.toml`:
@@ -136,3 +152,14 @@ Depois do deploy, validar obrigatoriamente:
 - Queue e consumidor ativos;
 - nenhuma credencial aparece em logs;
 - somente entao configurar `NUVEMSHOP_REDIRECT_URI` e iniciar o OAuth real.
+
+## Checklist pendente (pos-deploy)
+
+A infraestrutura e os deploys estao concluidos. Faltam apenas as credenciais de runtime, que nunca sao versionadas:
+
+- [ ] Definir os 5 secrets de runtime em **staging** (`wrangler secret put ... --env staging`): `NUVEMSHOP_CLIENT_ID`, `NUVEMSHOP_CLIENT_SECRET`, `NUVEMSHOP_REDIRECT_URI`, `TOKEN_ENCRYPTION_KEY`, `ADMIN_SESSION_SECRET`.
+- [ ] Repetir os mesmos 5 secrets em **production** (`--env production`).
+- [ ] Cadastrar o Redirect URI de cada ambiente no app **Maison Decants Automacao** no Portal de Parceiros Nuvemshop.
+- [ ] Validar `GET /health` (200) e o fluxo OAuth `/oauth/install` em staging antes de liberar production.
+
+> `TOKEN_ENCRYPTION_KEY` e `ADMIN_SESSION_SECRET` sao chaves proprias — gere com `openssl rand -base64 32`. A verificacao HMAC dos webhooks usa `NUVEMSHOP_CLIENT_SECRET` (nao ha secret separado). Depois de `wrangler secret put`, o Worker recarrega os valores sozinho, sem novo deploy.
