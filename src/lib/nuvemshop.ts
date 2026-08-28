@@ -1,11 +1,12 @@
 import type { Env, OAuthTokenResponse } from "../types";
 
+const MANDATORY_WEBHOOK_EVENTS = ["app/uninstalled", "app/suspended"] as const;
+
 const DEFAULT_WEBHOOK_EVENTS = [
-  "app/uninstalled",
-  "app/suspended",
-  "app/resumed",
+  ...MANDATORY_WEBHOOK_EVENTS,
   "order/created",
   "order/updated",
+  "order/edited",
   "order/paid",
   "order/cancelled",
   "product/created",
@@ -15,6 +16,12 @@ const DEFAULT_WEBHOOK_EVENTS = [
   "customer/updated",
   "customer/deleted",
 ] as const;
+
+export interface WebhookRegistrationReport {
+  registered: string[];
+  existing: string[];
+  failed: Array<{ event: string; error: string }>;
+}
 
 function userAgent(env: Env): string {
   return `${env.APP_NAME} (${env.APP_CONTACT_EMAIL})`;
@@ -104,20 +111,43 @@ export async function registerCoreWebhooks(
   storeId: number,
   accessToken: string,
   publicBaseUrl: string,
-): Promise<void> {
+): Promise<WebhookRegistrationReport> {
   type Webhook = { id: number; event: string; url: string };
   const existing = await nuvemshopApi<Webhook[]>(env, storeId, accessToken, "/webhooks?per_page=200");
   const targetUrl = `${publicBaseUrl.replace(/\/$/, "")}/webhooks/nuvemshop`;
+  const report: WebhookRegistrationReport = { registered: [], existing: [], failed: [] };
 
   for (const event of DEFAULT_WEBHOOK_EVENTS) {
     const alreadyRegistered = existing.some(
       (webhook) => webhook.event === event && webhook.url === targetUrl,
     );
-    if (alreadyRegistered) continue;
+    if (alreadyRegistered) {
+      report.existing.push(event);
+      continue;
+    }
 
-    await nuvemshopApi<Webhook>(env, storeId, accessToken, "/webhooks", {
-      method: "POST",
-      body: JSON.stringify({ event, url: targetUrl }),
-    });
+    try {
+      await nuvemshopApi<Webhook>(env, storeId, accessToken, "/webhooks", {
+        method: "POST",
+        body: JSON.stringify({ event, url: targetUrl }),
+      });
+      report.registered.push(event);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      report.failed.push({ event, error: message.slice(0, 500) });
+    }
   }
+
+  const mandatoryFailures = report.failed.filter((failure) =>
+    (MANDATORY_WEBHOOK_EVENTS as readonly string[]).includes(failure.event),
+  );
+  if (mandatoryFailures.length > 0) {
+    throw new Error(
+      `Mandatory webhook registration failed: ${mandatoryFailures
+        .map((failure) => `${failure.event}: ${failure.error}`)
+        .join(" | ")}`,
+    );
+  }
+
+  return report;
 }
