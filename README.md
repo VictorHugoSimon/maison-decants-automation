@@ -1,27 +1,40 @@
 # Maison Decants Automation
 
-Middleware oficial da Maison Decants para integração segura com a Nuvemshop.
+Middleware oficial da Maison Decants para integracao segura com a Nuvemshop.
 
 ## Objetivo
 
-Centralizar autenticação OAuth 2.0, webhooks, sincronização de produtos, estoque, pedidos e clientes, mantendo a Nuvemshop como fonte oficial dos dados da loja.
+Centralizar autenticacao OAuth 2.0, webhooks, sincronizacao de produtos, estoque, pedidos e clientes, mantendo a Nuvemshop como fonte oficial dos dados da loja.
 
 ## Arquitetura
 
 - Cloudflare Workers + TypeScript
-- Cloudflare D1 para persistência
+- Cloudflare D1 por ambiente
+- Cloudflare Queues para processamento assincrono de webhooks
+- retry + dead-letter queue
 - OAuth 2.0 Authorization Code
-- Webhooks com processamento idempotente
-- CI via GitHub Actions
-- Ambientes `staging` e `production` isolados
+- tokens criptografados antes da persistencia
+- validacao HMAC dos webhooks
+- idempotencia de eventos
+- GitHub Actions para CI/CD
+- ambientes `staging` e `production` isolados
 
-## Segurança
+## Seguranca
 
 - Nunca versionar `client_secret`, `access_token` ou chaves privadas.
 - Credenciais devem ser configuradas como secrets do Cloudflare/GitHub.
-- O aplicativo deve solicitar apenas os escopos necessários.
-- Eventos e mudanças de credenciais devem possuir trilha de auditoria.
+- O aplicativo deve solicitar apenas os escopos necessarios.
+- Eventos e mudancas de credenciais devem possuir trilha de auditoria.
+- Staging e producao usam bancos, filas e configuracoes isoladas.
+
+## Deploy
+
+O pipeline de CI/CD e a infraestrutura de staging/production estao documentados em [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## Status
 
-Base técnica inicial em construção. A próxima etapa é cadastrar o aplicativo **Maison Decants Automação** no Portal de Parceiros Nuvemshop e configurar as credenciais OAuth.
+- codigo base OAuth e webhooks: concluido;
+- D1 staging e production: provisionados;
+- Queue, retry e DLQ: configurados no codigo/infra;
+- CI: ativo;
+- proxima etapa: merge em `staging`, deploy real do Worker e obtencao da URL HTTPS para configurar o aplicativo **Maison Decants Automacao** na Nuvemshop.

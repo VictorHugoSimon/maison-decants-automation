@@ -1,7 +1,11 @@
 name = "maison-decants-automation"
 main = "src/index.ts"
 compatibility_date = "2026-08-22"
+workers_dev = true
 
+# O bloco de nivel superior e usado por `wrangler dev` e por `wrangler deploy`
+# sem `--env`. Ambientes nomeados (staging, production) NAO herdam `vars` nem
+# bindings do topo, portanto cada ambiente redeclara os seus explicitamente.
 [vars]
 APP_NAME = "Maison Decants Automacao"
 APP_CONTACT_EMAIL = "victorhugoteixeirasimon@gmail.com"
@@ -11,10 +15,66 @@ NUVEMSHOP_OAUTH_TOKEN_URL = "https://www.nuvemshop.com/apps/authorize/token"
 [[d1_databases]]
 binding = "DB"
 database_name = "maison-decants-automation"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "837fb810-c0cf-4942-88f0-ceadc90d8381"
 
+# ---------------------------------------------------------------------------
+# Staging
+# Deploy automatico a partir da branch `staging` (ver .github/workflows/deploy.yml).
+# ---------------------------------------------------------------------------
 [env.staging]
 name = "maison-decants-automation-staging"
+workers_dev = true
 
+[env.staging.vars]
+APP_NAME = "Maison Decants Automacao (staging)"
+APP_CONTACT_EMAIL = "victorhugoteixeirasimon@gmail.com"
+NUVEMSHOP_API_BASE_URL = "https://api.nuvemshop.com.br/v1"
+NUVEMSHOP_OAUTH_TOKEN_URL = "https://www.nuvemshop.com/apps/authorize/token"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "maison-decants-automation-staging"
+database_id = "a60e8c1d-7f97-41a1-99c4-619266a556b6"
+
+[[env.staging.queues.producers]]
+binding = "WEBHOOK_QUEUE"
+queue = "maison-decants-webhooks-staging"
+
+[[env.staging.queues.consumers]]
+queue = "maison-decants-webhooks-staging"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 5
+retry_delay = 30
+dead_letter_queue = "maison-decants-webhooks-staging-dlq"
+
+# ---------------------------------------------------------------------------
+# Production
+# Deploy automatico a partir da branch `main` (ver .github/workflows/deploy.yml).
+# ---------------------------------------------------------------------------
 [env.production]
 name = "maison-decants-automation"
+workers_dev = true
+
+[env.production.vars]
+APP_NAME = "Maison Decants Automacao"
+APP_CONTACT_EMAIL = "victorhugoteixeirasimon@gmail.com"
+NUVEMSHOP_API_BASE_URL = "https://api.nuvemshop.com.br/v1"
+NUVEMSHOP_OAUTH_TOKEN_URL = "https://www.nuvemshop.com/apps/authorize/token"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "maison-decants-automation"
+database_id = "837fb810-c0cf-4942-88f0-ceadc90d8381"
+
+[[env.production.queues.producers]]
+binding = "WEBHOOK_QUEUE"
+queue = "maison-decants-webhooks"
+
+[[env.production.queues.consumers]]
+queue = "maison-decants-webhooks"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 5
+retry_delay = 30
+dead_letter_queue = "maison-decants-webhooks-dlq"
