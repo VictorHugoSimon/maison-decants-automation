@@ -22,6 +22,10 @@ Centralizar autenticação OAuth 2.0, webhooks, sincronização de produtos, est
 - O aplicativo deve solicitar apenas os escopos necessários.
 - Eventos e mudanças de credenciais devem possuir trilha de auditoria.
 
+## Deploy
+
+O pipeline de CI/CD e a infraestrutura de staging/production estao documentados em [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
 ## Status
 
 Base técnica inicial em construção. A próxima etapa é cadastrar o aplicativo **Maison Decants Automação** no Portal de Parceiros Nuvemshop e configurar as credenciais OAuth.
