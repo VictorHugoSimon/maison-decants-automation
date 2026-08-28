@@ -14,7 +14,7 @@ NUVEMSHOP_OAUTH_TOKEN_URL = "https://www.nuvemshop.com/apps/authorize/token"
 [[d1_databases]]
 binding = "DB"
 database_name = "maison-decants-automation"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "837fb810-c0cf-4942-88f0-ceadc90d8381"
 
 # ---------------------------------------------------------------------------
 # Staging
@@ -32,7 +32,7 @@ NUVEMSHOP_OAUTH_TOKEN_URL = "https://www.nuvemshop.com/apps/authorize/token"
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "maison-decants-automation-staging"
-database_id = "REPLACE_WITH_STAGING_D1_DATABASE_ID"
+database_id = "a60e8c1d-7f97-41a1-99c4-619266a556b6"
 
 # ---------------------------------------------------------------------------
 # Production
@@ -50,4 +50,4 @@ NUVEMSHOP_OAUTH_TOKEN_URL = "https://www.nuvemshop.com/apps/authorize/token"
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "maison-decants-automation"
-database_id = "REPLACE_WITH_PRODUCTION_D1_DATABASE_ID"
+database_id = "837fb810-c0cf-4942-88f0-ceadc90d8381"
