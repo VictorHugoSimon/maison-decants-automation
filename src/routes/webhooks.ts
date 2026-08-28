@@ -1,6 +1,15 @@
 import { decryptSecret, verifyNuvemshopWebhook } from "../lib/crypto";
 import { nuvemshopApi } from "../lib/nuvemshop";
-import type { Env, NuvemshopWebhookPayload } from "../types";
+import type { Env, NuvemshopWebhookPayload, QueuedWebhookMessage } from "../types";
+
+const encoder = new TextEncoder();
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 async function ensureStore(env: Env, storeId: number): Promise<void> {
   await env.DB.prepare(
@@ -15,15 +24,17 @@ async function ensureStore(env: Env, storeId: number): Promise<void> {
 async function markEvent(
   env: Env,
   eventId: string,
-  status: "processed" | "error",
+  status: "queued" | "processing" | "processed" | "error",
   errorMessage?: string,
 ): Promise<void> {
   await env.DB.prepare(
     `UPDATE webhook_events
-     SET processing_status = ?, processed_at = CURRENT_TIMESTAMP, error_message = ?
+     SET processing_status = ?,
+         processed_at = CASE WHEN ? = 'processed' THEN CURRENT_TIMESTAMP ELSE processed_at END,
+         error_message = ?
      WHERE event_id = ?`,
   )
-    .bind(status, errorMessage ?? null, eventId)
+    .bind(status, status, errorMessage ?? null, eventId)
     .run();
 }
 
@@ -87,57 +98,82 @@ async function processEntityEvent(
   await upsertSnapshot(env, payload.store_id, config.entityType, entityId, entity);
 }
 
-async function processWebhook(
+async function executeWebhook(
   env: Env,
   eventId: string,
   payload: NuvemshopWebhookPayload,
 ): Promise<void> {
-  try {
-    if (payload.event === "app/uninstalled") {
-      await env.DB.prepare(
-        `UPDATE stores SET status = 'uninstalled', access_token_ciphertext = NULL, updated_at = CURRENT_TIMESTAMP
-         WHERE store_id = ?`,
-      )
-        .bind(payload.store_id)
-        .run();
-    } else if (payload.event === "app/suspended") {
-      await env.DB.prepare(
-        "UPDATE stores SET status = 'suspended', updated_at = CURRENT_TIMESTAMP WHERE store_id = ?",
-      )
-        .bind(payload.store_id)
-        .run();
-    } else if (payload.event === "app/resumed") {
-      await env.DB.prepare(
-        "UPDATE stores SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE store_id = ?",
-      )
-        .bind(payload.store_id)
-        .run();
-    } else {
-      await processEntityEvent(env, payload);
+  if (payload.event === "app/uninstalled") {
+    await env.DB.prepare(
+      `UPDATE stores SET status = 'uninstalled', access_token_ciphertext = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE store_id = ?`,
+    )
+      .bind(payload.store_id)
+      .run();
+  } else if (payload.event === "app/suspended") {
+    await env.DB.prepare(
+      "UPDATE stores SET status = 'suspended', updated_at = CURRENT_TIMESTAMP WHERE store_id = ?",
+    )
+      .bind(payload.store_id)
+      .run();
+  } else if (payload.event === "app/resumed") {
+    await env.DB.prepare(
+      "UPDATE stores SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE store_id = ?",
+    )
+      .bind(payload.store_id)
+      .run();
+  } else {
+    await processEntityEvent(env, payload);
+  }
+
+  await env.DB.prepare(
+    "INSERT INTO audit_log (store_id, action, status, details) VALUES (?, ?, 'success', ?)",
+  )
+    .bind(payload.store_id, `webhook:${payload.event}`, JSON.stringify({ event_id: eventId }))
+    .run();
+  await markEvent(env, eventId, "processed");
+}
+
+async function claimEvent(env: Env, eventId: string): Promise<boolean> {
+  const result = await env.DB.prepare(
+    `UPDATE webhook_events
+     SET processing_status = 'processing', error_message = NULL
+     WHERE event_id = ? AND processing_status IN ('received', 'queued', 'error')`,
+  )
+    .bind(eventId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function handleWebhookQueue(
+  batch: MessageBatch<QueuedWebhookMessage>,
+  env: Env,
+): Promise<void> {
+  for (const message of batch.messages) {
+    const { eventId, payload } = message.body;
+    const claimed = await claimEvent(env, eventId);
+    if (!claimed) {
+      message.ack();
+      continue;
     }
 
-    await env.DB.prepare(
-      "INSERT INTO audit_log (store_id, action, status, details) VALUES (?, ?, 'success', ?)",
-    )
-      .bind(payload.store_id, `webhook:${payload.event}`, JSON.stringify({ event_id: eventId }))
-      .run();
-    await markEvent(env, eventId, "processed");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    await env.DB.prepare(
-      "INSERT INTO audit_log (store_id, action, status, details) VALUES (?, ?, 'error', ?)",
-    )
-      .bind(payload.store_id, `webhook:${payload.event}`, message.slice(0, 1000))
-      .run();
-    await markEvent(env, eventId, "error", message.slice(0, 1000));
+    try {
+      await executeWebhook(env, eventId, payload);
+      message.ack();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await env.DB.prepare(
+        "INSERT INTO audit_log (store_id, action, status, details) VALUES (?, ?, 'error', ?)",
+      )
+        .bind(payload.store_id, `webhook:${payload.event}`, detail.slice(0, 1000))
+        .run();
+      await markEvent(env, eventId, "error", detail.slice(0, 1000));
+      message.retry();
+    }
   }
 }
 
-export async function handleNuvemshopWebhook(
-  request: Request,
-  env: Env,
-  ctx: ExecutionContext,
-): Promise<Response> {
+export async function handleNuvemshopWebhook(request: Request, env: Env): Promise<Response> {
   const rawBody = await request.text();
   const signature = request.headers.get("x-linkedstore-hmac-sha256");
   const isValid = await verifyNuvemshopWebhook(rawBody, signature, env.NUVEMSHOP_CLIENT_SECRET);
@@ -155,14 +191,26 @@ export async function handleNuvemshopWebhook(
   }
 
   await ensureStore(env, payload.store_id);
-  const eventId = crypto.randomUUID();
+  const eventId = await sha256Hex(rawBody);
+
   await env.DB.prepare(
-    `INSERT INTO webhook_events (event_id, store_id, event_name, entity_id, payload_json)
+    `INSERT OR IGNORE INTO webhook_events (event_id, store_id, event_name, entity_id, payload_json)
      VALUES (?, ?, ?, ?, ?)`,
   )
     .bind(eventId, payload.store_id, payload.event, payload.id === undefined ? null : String(payload.id), rawBody)
     .run();
 
-  ctx.waitUntil(processWebhook(env, eventId, payload));
+  const existing = await env.DB.prepare(
+    "SELECT processing_status FROM webhook_events WHERE event_id = ?",
+  )
+    .bind(eventId)
+    .first<{ processing_status: string }>();
+
+  if (existing?.processing_status === "processed") {
+    return new Response("accepted", { status: 202 });
+  }
+
+  await env.WEBHOOK_QUEUE.send({ eventId, payload });
+  await markEvent(env, eventId, "queued");
   return new Response("accepted", { status: 202 });
 }
