@@ -1,101 +1,136 @@
 # Deploy e Ambientes
 
-Este documento descreve a infraestrutura de staging/production e o pipeline de
-CI/CD do middleware Maison Decants.
+Este documento descreve a infraestrutura de staging/production e o pipeline de CI/CD do middleware Maison Decants.
 
 ## Visao geral
 
-| Ambiente     | Branch    | Worker                                 | Banco D1                                 |
-| ------------ | --------- | -------------------------------------- | ---------------------------------------- |
-| `staging`    | `staging` | `maison-decants-automation-staging`    | `maison-decants-automation-staging`      |
-| `production` | `main`    | `maison-decants-automation`            | `maison-decants-automation`              |
+| Ambiente | Branch | Worker | Banco D1 | Queue principal | Dead-letter queue |
+| --- | --- | --- | --- | --- | --- |
+| `staging` | `staging` | `maison-decants-automation-staging` | `maison-decants-automation-staging` | `maison-decants-webhooks-staging` | `maison-decants-webhooks-staging-dlq` |
+| `production` | `main` | `maison-decants-automation` | `maison-decants-automation` | `maison-decants-webhooks` | `maison-decants-webhooks-dlq` |
 
 O fluxo de promocao e sempre `feature -> staging -> main`:
 
-1. Abra o PR da sua branch de trabalho para `staging`. O workflow **CI**
-   (`.github/workflows/ci.yml`) roda `typecheck` e `test`.
-2. Ao mesclar em `staging`, o workflow **Deploy** publica no ambiente de staging
-   e aplica as migracoes D1 remotas.
-3. Depois de validar em staging, abra o PR de `staging` para `main`. Ao mesclar,
-   o mesmo workflow publica em production.
+1. Abra o PR da branch de trabalho para `staging`. O workflow **CI** roda `typecheck` e testes.
+2. Ao mesclar em `staging`, o workflow **Deploy** aplica migracoes D1 remotas e publica o Worker de staging.
+3. Depois da validacao funcional em staging, promova `staging` para `main` para publicar production.
 
-## Pipelines (GitHub Actions)
+## Recursos Cloudflare ja provisionados
+
+Os bancos D1 ja foram criados e seus IDs reais estao configurados no `wrangler.toml`:
+
+- staging: `maison-decants-automation-staging` — `a60e8c1d-7f97-41a1-99c4-619266a556b6`
+- production: `maison-decants-automation` — `837fb810-c0cf-4942-88f0-ceadc90d8381`
+
+Os bindings de Queue estao declarados por ambiente no `wrangler.toml`. Antes do primeiro deploy, confirme que as filas principais existem na mesma conta Cloudflare. As DLQs podem ser criadas explicitamente ou pela configuracao do consumidor.
+
+Criacao manual, se necessario:
+
+```bash
+npx wrangler queues create maison-decants-webhooks-staging
+npx wrangler queues create maison-decants-webhooks-staging-dlq
+npx wrangler queues create maison-decants-webhooks
+npx wrangler queues create maison-decants-webhooks-dlq
+```
+
+## Arquitetura de webhooks
+
+O endpoint HTTP `/webhooks/nuvemshop` executa apenas o caminho rapido:
+
+1. valida a assinatura HMAC da Nuvemshop;
+2. valida o payload;
+3. calcula uma chave SHA-256 deterministica do corpo para idempotencia;
+4. persiste o evento no D1;
+5. publica a mensagem na `WEBHOOK_QUEUE`;
+6. responde HTTP `202`.
+
+O consumidor da Queue processa o evento fora da requisicao HTTP, com:
+
+- claim condicional no D1 para impedir processamento concorrente duplicado;
+- ate 5 tentativas;
+- atraso padrao de 30 segundos entre retries;
+- DLQ por ambiente para mensagens que excederem o limite de tentativas;
+- trilha de auditoria e status de processamento no D1.
+
+## Pipelines GitHub Actions
 
 ### CI — `.github/workflows/ci.yml`
 
-- Dispara em `push` para `main`/`staging` e em `pull_request` para `main`/`staging`.
-- Passos: `npm install`, `npm run typecheck`, `npm test`.
-- Nao precisa de segredos; serve como gate de qualidade antes do deploy.
+Dispara em `push` para `main`/`staging` e em pull requests para `main`/`staging`.
+
+Passos:
+
+- `npm install`
+- `npm run typecheck`
+- `npm test`
 
 ### Deploy — `.github/workflows/deploy.yml`
 
-- Dispara em `push` para `staging` (deploy em staging) e `main` (deploy em production).
-- Seleciona o ambiente do Wrangler a partir da branch:
-  `main -> production`, caso contrario `staging`.
-- Passos: `typecheck` e `test` (novo gate), `wrangler d1 migrations apply`
-  (`--remote`) e `wrangler deploy --env <ambiente>`.
-- Usa `concurrency` por `github.ref` com `cancel-in-progress: false` para nao
-  interromper uma migracao em andamento.
-- Vincula-se ao GitHub Environment homonimo (`staging`/`production`), permitindo
-  regras de protecao (revisores obrigatorios, wait timer) na UI do GitHub.
+Dispara em `push` para `staging` e `main`.
 
-## Segredos necessarios
+- `staging` -> ambiente Wrangler `staging`
+- `main` -> ambiente Wrangler `production`
 
-Configure em **Settings > Secrets and variables > Actions**. Se usar regras de
-protecao por ambiente, defina-os como **Environment secrets** em cada Environment
-(`staging` e `production`); caso contrario, como Repository secrets.
+Passos:
 
-| Segredo                 | Descricao                                                        |
-| ----------------------- | ---------------------------------------------------------------- |
-| `CLOUDFLARE_API_TOKEN`  | Token com permissao de editar Workers e D1 na conta.             |
-| `CLOUDFLARE_ACCOUNT_ID` | ID da conta Cloudflare.                                          |
+1. checkout;
+2. Node.js;
+3. dependencias;
+4. typecheck;
+5. testes;
+6. migrations D1 remotas;
+7. deploy do Worker.
 
-O `CLOUDFLARE_API_TOKEN` deve incluir, no minimo, as permissoes:
-`Account > Workers Scripts > Edit` e `Account > D1 > Edit`.
+O workflow usa `concurrency` por branch e nao cancela um deploy que ja iniciou.
 
-## Segredos do Worker (runtime)
+## Segredos necessarios no GitHub
 
-As credenciais da aplicacao NAO ficam no `wrangler.toml`. Defina-as por ambiente
-com `wrangler secret put ... --env <ambiente>`:
+Configure em **Settings > Secrets and variables > Actions** ou, preferencialmente, nos GitHub Environments `staging` e `production`:
+
+| Segredo | Uso |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | deploy de Workers, D1 e recursos associados |
+| `CLOUDFLARE_ACCOUNT_ID` | identifica a conta Cloudflare exclusiva da Maison Decants |
+
+O token deve possuir apenas as permissoes necessarias ao deploy deste projeto.
+
+## Segredos runtime do Worker
+
+Nunca grave estes valores no repositorio:
 
 ```bash
 wrangler secret put NUVEMSHOP_CLIENT_ID       --env staging
 wrangler secret put NUVEMSHOP_CLIENT_SECRET   --env staging
 wrangler secret put NUVEMSHOP_REDIRECT_URI    --env staging
 wrangler secret put TOKEN_ENCRYPTION_KEY      --env staging
-wrangler secret put WEBHOOK_SHARED_SECRET     --env staging
 wrangler secret put ADMIN_SESSION_SECRET      --env staging
 ```
 
-Repita com `--env production` para o ambiente de producao. Veja `.env.example`
-para a lista completa de variaveis.
+Repita para `--env production` somente depois da homologacao de staging.
 
-## Provisionamento inicial dos bancos D1
+## Migracoes D1
 
-Os `database_id` no `wrangler.toml` estao como placeholders. Crie os bancos e
-substitua os IDs:
+As migracoes ficam em `migrations/` e o pipeline as aplica remotamente antes do deploy.
 
-```bash
-wrangler d1 create maison-decants-automation-staging
-wrangler d1 create maison-decants-automation
-```
-
-Copie cada `database_id` retornado para o bloco correspondente em `wrangler.toml`
-(`REPLACE_WITH_STAGING_D1_DATABASE_ID` e `REPLACE_WITH_PRODUCTION_D1_DATABASE_ID`).
-
-As migracoes ficam em `migrations/` e sao aplicadas automaticamente pelo pipeline
-de deploy. Para aplicar manualmente:
+Aplicacao manual de staging:
 
 ```bash
-wrangler d1 migrations apply DB --env staging --remote
+npx wrangler d1 migrations apply DB --env staging --remote
 ```
 
-## Deploy manual (fallback)
-
-Caso precise publicar fora do pipeline:
+## Deploy manual de fallback
 
 ```bash
-npm run check                                   # typecheck + testes
-wrangler d1 migrations apply DB --env staging --remote
-wrangler deploy --env staging
+npm run check
+npx wrangler d1 migrations apply DB --env staging --remote
+npx wrangler deploy --env staging
 ```
+
+Depois do deploy, validar obrigatoriamente:
+
+- `GET /health` retorna `200`;
+- URL publica `workers.dev` registrada;
+- D1 acessivel;
+- Queue e consumidor ativos;
+- nenhuma credencial aparece em logs;
+- somente entao configurar `NUVEMSHOP_REDIRECT_URI` e iniciar o OAuth real.
