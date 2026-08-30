@@ -35,26 +35,30 @@ export async function exchangeAuthorizationCode(
   env: Env,
   code: string,
 ): Promise<OAuthTokenResponse> {
+  const body = new URLSearchParams({
+    client_id: env.NUVEMSHOP_CLIENT_ID,
+    client_secret: env.NUVEMSHOP_CLIENT_SECRET,
+    grant_type: "authorization_code",
+    code,
+  });
+
   const response = await fetch(env.NUVEMSHOP_OAUTH_TOKEN_URL, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
       "User-Agent": userAgent(env),
     },
-    body: JSON.stringify({
-      client_id: env.NUVEMSHOP_CLIENT_ID,
-      client_secret: env.NUVEMSHOP_CLIENT_SECRET,
-      redirect_uri: env.NUVEMSHOP_REDIRECT_URI,
-      grant_type: "authorization_code",
-      code,
-    }),
+    body,
   });
 
   if (!response.ok) {
     throw new Error(`OAuth token exchange failed with HTTP ${response.status}`);
   }
 
-  const token = (await response.json()) as OAuthTokenResponse;
+  const token = (await response.json()) as OAuthTokenResponse & { error?: string };
+  if (token.error) {
+    throw new Error(`OAuth token exchange rejected: ${token.error}`);
+  }
   if (!token.access_token || !token.user_id) {
     throw new Error("OAuth token response is missing access_token or user_id");
   }
