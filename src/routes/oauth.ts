@@ -22,10 +22,15 @@ export async function handleOAuthCallback(request: Request, env: Env): Promise<R
   const code = url.searchParams.get("code");
   if (!code) return html("Código de autorização não recebido.", 400);
 
+  let stage = "token_exchange";
+
   try {
     const token = await exchangeAuthorizationCode(env, code);
+
+    stage = "token_encryption";
     const encryptedToken = await encryptSecret(token.access_token, env.TOKEN_ENCRYPTION_KEY);
 
+    stage = "store_persistence";
     await env.DB.prepare(
       `INSERT INTO stores (store_id, access_token_ciphertext, scopes, status, installed_at, updated_at)
        VALUES (?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -38,12 +43,14 @@ export async function handleOAuthCallback(request: Request, env: Env): Promise<R
       .bind(token.user_id, encryptedToken, token.scope ?? null)
       .run();
 
+    stage = "oauth_audit";
     await env.DB.prepare(
       "INSERT INTO audit_log (store_id, action, status, details) VALUES (?, 'oauth_install', 'success', ?)",
     )
       .bind(token.user_id, JSON.stringify({ scope: token.scope ?? null }))
       .run();
 
+    stage = "webhook_registration";
     const publicBaseUrl = new URL(env.NUVEMSHOP_REDIRECT_URI).origin;
     const webhookReport = await registerCoreWebhooks(
       env,
@@ -52,6 +59,7 @@ export async function handleOAuthCallback(request: Request, env: Env): Promise<R
       publicBaseUrl,
     );
 
+    stage = "webhook_audit";
     await env.DB.prepare(
       "INSERT INTO audit_log (store_id, action, status, details) VALUES (?, 'webhook_registration', ?, ?)",
     )
@@ -69,11 +77,19 @@ export async function handleOAuthCallback(request: Request, env: Env): Promise<R
     return html(`Integração autorizada com sucesso. A loja está conectada e os webhooks obrigatórios foram registrados.${optionalWarning}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await env.DB.prepare(
-      "INSERT INTO audit_log (action, status, details) VALUES ('oauth_install', 'error', ?)",
-    )
-      .bind(message.slice(0, 1000))
-      .run();
-    return html("Não foi possível concluir a autorização. Consulte os logs técnicos antes de tentar novamente.", 502);
+    console.error("OAuth callback failed", { stage, message });
+
+    try {
+      await env.DB.prepare(
+        "INSERT INTO audit_log (action, status, details) VALUES ('oauth_install', 'error', ?)",
+      )
+        .bind(JSON.stringify({ stage, message: message.slice(0, 500) }))
+        .run();
+    } catch (auditError) {
+      const auditMessage = auditError instanceof Error ? auditError.message : String(auditError);
+      console.error("OAuth failure audit write failed", { stage, message: auditMessage });
+    }
+
+    return html(`Não foi possível concluir a autorização. Etapa técnica: ${stage}.`, 502);
   }
 }
