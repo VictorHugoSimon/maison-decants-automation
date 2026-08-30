@@ -29,7 +29,7 @@ workers_dev = true
 APP_NAME = "Maison Decants Automacao (staging)"
 APP_CONTACT_EMAIL = "victorhugoteixeirasimon@gmail.com"
 NUVEMSHOP_API_BASE_URL = "https://api.nuvemshop.com.br/v1"
-NUVEMSHOP_OAUTH_TOKEN_URL = "https://www.nuvemshop.com/apps/authorize/token"
+NUVEMSHOP_OAUTH_TOKEN_URL = "https://www.tiendanube.com/apps/authorize/token"
 
 [[env.staging.d1_databases]]
 binding = "DB"
