@@ -90,6 +90,17 @@ export async function handleOAuthCallback(request: Request, env: Env): Promise<R
       console.error("OAuth failure audit write failed", { stage, message: auditMessage });
     }
 
-    return html(`Não foi possível concluir a autorização. Etapa técnica: ${stage}.`, 502);
+    const knownOAuthErrors = [
+      "invalid_client",
+      "invalid_grant",
+      "invalid_request",
+      "unsupported_grant_type",
+    ];
+    const safeOAuthError = stage === "token_exchange"
+      ? knownOAuthErrors.find((errorCode) => message.includes(errorCode))
+      : undefined;
+    const safeErrorSuffix = safeOAuthError ? ` Código seguro: ${safeOAuthError}.` : "";
+
+    return html(`Não foi possível concluir a autorização. Etapa técnica: ${stage}.${safeErrorSuffix}`, 502);
   }
 }
