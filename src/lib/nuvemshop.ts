@@ -17,6 +17,13 @@ const DEFAULT_WEBHOOK_EVENTS = [
   "customer/deleted",
 ] as const;
 
+const SAFE_OAUTH_ERROR_CODES = new Set([
+  "invalid_client",
+  "invalid_grant",
+  "invalid_request",
+  "unsupported_grant_type",
+]);
+
 export interface WebhookRegistrationReport {
   registered: string[];
   existing: string[];
@@ -29,6 +36,19 @@ function userAgent(env: Env): string {
 
 async function sleep(milliseconds: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function safeOAuthErrorCode(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown };
+    if (typeof parsed.error === "string" && SAFE_OAUTH_ERROR_CODES.has(parsed.error)) {
+      return parsed.error;
+    }
+  } catch {
+    // Ignore malformed/non-JSON bodies. Never expose the raw response body.
+  }
+
+  return undefined;
 }
 
 export async function exchangeAuthorizationCode(
@@ -52,12 +72,16 @@ export async function exchangeAuthorizationCode(
   });
 
   if (!response.ok) {
-    throw new Error(`OAuth token exchange failed with HTTP ${response.status}`);
+    const responseBody = await response.text();
+    const errorCode = safeOAuthErrorCode(responseBody);
+    const safeSuffix = errorCode ? `: ${errorCode}` : "";
+    throw new Error(`OAuth token exchange failed with HTTP ${response.status}${safeSuffix}`);
   }
 
   const token = (await response.json()) as OAuthTokenResponse & { error?: string };
   if (token.error) {
-    throw new Error(`OAuth token exchange rejected: ${token.error}`);
+    const safeCode = SAFE_OAUTH_ERROR_CODES.has(token.error) ? token.error : "unknown_oauth_error";
+    throw new Error(`OAuth token exchange rejected: ${safeCode}`);
   }
   if (!token.access_token || !token.user_id) {
     throw new Error("OAuth token response is missing access_token or user_id");
